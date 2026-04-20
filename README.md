@@ -10,6 +10,18 @@ python3 build_static.py
 
 Requires Python 3 with network access.
 
+## GitHub CLI (`gh`) and Actions workflows
+
+Pushing changes under `.github/workflows/` requires a token with the **`workflow`** scope. If `git push` is rejected for that reason, run:
+
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+Complete the browser/device prompt, then `git push` again.
+
+Use **HTTPS** remotes with `gh auth setup-git` so pushes use your logged-in `gh` account (SSH may use a different GitHub user’s key).
+
 ## Azure Static Web Apps
 
 1. In [Azure Portal](https://portal.azure.com), create a **Static Web App** and connect this GitHub repository (or add the deployment token manually).
