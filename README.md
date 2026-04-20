@@ -26,7 +26,7 @@ Use **HTTPS** remotes with `gh auth setup-git` so pushes use your logged-in `gh`
 
 1. In [Azure Portal](https://portal.azure.com), create a **Static Web App** and connect this GitHub repository (or add the deployment token manually).
 2. In the GitHub repo: **Settings → Secrets and variables → Actions**, add **`AZURE_STATIC_WEB_APPS_API_TOKEN`** with the value from Azure: **Static Web App → Overview → Manage deployment token**.
-3. Push to **`main`**; the workflow in `.github/workflows/azure-static-web-apps.yml` deploys the repo root (`index.html`, `staticwebapp.config.json`) with no build step.
+3. **CI workflow:** the same workflow YAML lives at **`deploy/azure-static-web-apps.yml`**. Copy it to **`.github/workflows/azure-static-web-apps.yml`** (then commit and push). If `git push` is rejected for OAuth `workflow` scope, run `gh auth refresh -h github.com -s workflow` first. Pushes to **`main`** deploy the repo root (`index.html`, `staticwebapp.config.json`) with no build step.
 
 Custom domain and HTTPS are configured in the Azure Static Web App blade.
 
