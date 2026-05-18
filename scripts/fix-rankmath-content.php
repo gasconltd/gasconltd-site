@@ -244,9 +244,9 @@ foreach ( $post_ids as $post_id ) {
 	update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( $data ) ) );
 
 	if ( class_exists( '\Elementor\Plugin' ) ) {
-		\Elementor\Plugin::$instance->files_manager->clear_cache();
-		if ( method_exists( \Elementor\Plugin::$instance->posts_manager, 'mark_post_as_dirty' ) ) {
-			\Elementor\Plugin::$instance->posts_manager->mark_post_as_dirty( $post_id );
+		$elementor = \Elementor\Plugin::$instance;
+		if ( $elementor && isset( $elementor->files_manager ) && is_object( $elementor->files_manager ) ) {
+			$elementor->files_manager->clear_cache();
 		}
 	}
 
