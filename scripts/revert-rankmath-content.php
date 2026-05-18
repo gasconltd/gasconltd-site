@@ -1,9 +1,8 @@
 <?php
 /**
- * Revert changes made by fix-rankmath-content.php.
+ * Revert Rank Math SEO changes (legacy v1 injection + v2 minimal patch).
  *
  * Run on Azure:
- *   cd /home/site/wwwroot
  *   wp eval-file revert-rankmath-content.php all --allow-root
  */
 
@@ -14,11 +13,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $args;
 
-$marker_class = 'gascon-rm-seo';
-$logo_alt     = 'plumbers bolton GASCON Ltd Gas Safe heating engineers';
+const GASCON_RM_PATCH_META = '_gascon_rm_patch_v2';
+
+$marker_class   = 'gascon-rm-seo';
+$legacy_alt     = 'plumbers bolton GASCON Ltd Gas Safe heating engineers';
 $heading_prefix = 'Plumbers Bolton — ';
 
-$seo_html = <<<HTML
+$legacy_seo_html = <<<HTML
 <p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing, boiler repairs and central heating across Bolton and Greater Manchester.</p>
 <h2>Plumbers Bolton plumbing and heating services</h2>
 <h3>Trusted plumbers bolton for emergencies and installations</h3>
@@ -40,16 +41,64 @@ function gascon_rm_section_has_marker( array $section, $marker_class ) {
 	return is_string( $classes ) && false !== strpos( $classes, $marker_class );
 }
 
-function gascon_rm_revert_elementor( array &$elements, $heading_prefix, $logo_alt, &$stats ) {
+function gascon_rm_revert_v2_patch( array &$elements, array $patch, &$stats ) {
+	if ( ! empty( $patch['text']['id'] ) && ! empty( $patch['text']['prepended'] ) ) {
+		$widget = null;
+		if ( gascon_rm_find_by_id( $elements, $patch['text']['id'], $widget ) && $widget ) {
+			$editor = (string) ( $widget['settings']['editor'] ?? '' );
+			if ( 0 === strpos( $editor, $patch['text']['prepended'] ) ) {
+				$widget['settings']['editor'] = substr( $editor, strlen( $patch['text']['prepended'] ) );
+				++$stats['v2_text'];
+			}
+		}
+	}
+
+	if ( ! empty( $patch['image']['id'] ) ) {
+		$widget = null;
+		if ( gascon_rm_find_by_id( $elements, $patch['image']['id'], $widget ) && $widget ) {
+			$widget['settings']['image_alt'] = $patch['image']['image_alt'] ?? '';
+			if ( isset( $widget['settings']['image'] ) && is_array( $widget['settings']['image'] ) ) {
+				$widget['settings']['image']['alt'] = $patch['image']['nested_alt'] ?? '';
+			}
+			++$stats['v2_image'];
+		}
+	}
+
+	if ( ! empty( $patch['attachment']['id'] ) ) {
+		$aid = (int) $patch['attachment']['id'];
+		$prev = $patch['attachment']['alt'] ?? '';
+		if ( '' === $prev ) {
+			delete_post_meta( $aid, '_wp_attachment_image_alt' );
+		} else {
+			update_post_meta( $aid, '_wp_attachment_image_alt', $prev );
+		}
+		++$stats['v2_attachment'];
+	}
+}
+
+function gascon_rm_find_by_id( array $elements, $widget_id, &$found = null ) {
+	foreach ( $elements as &$element ) {
+		if ( ( $element['id'] ?? '' ) === $widget_id ) {
+			$found = &$element;
+			return true;
+		}
+		if ( ! empty( $element['elements'] ) && gascon_rm_find_by_id( $element['elements'], $widget_id, $found ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function gascon_rm_revert_legacy_elementor( array &$elements, $heading_prefix, $logo_alt, &$stats ) {
 	$filtered = array();
 	foreach ( $elements as $element ) {
 		if ( 'section' === ( $element['elType'] ?? '' ) && gascon_rm_section_has_marker( $element, 'gascon-rm-seo' ) ) {
-			++$stats['sections_removed'];
+			++$stats['legacy_sections'];
 			continue;
 		}
 
-		if ( ! empty( $element['elements'] ) && is_array( $element['elements'] ) ) {
-			$element['elements'] = gascon_rm_revert_elementor( $element['elements'], $heading_prefix, $logo_alt, $stats );
+		if ( ! empty( $element['elements'] ) ) {
+			$element['elements'] = gascon_rm_revert_legacy_elementor( $element['elements'], $heading_prefix, $logo_alt, $stats );
 		}
 
 		$type = $element['widgetType'] ?? '';
@@ -57,35 +106,17 @@ function gascon_rm_revert_elementor( array &$elements, $heading_prefix, $logo_al
 			$title = (string) ( $element['settings']['title'] ?? '' );
 			if ( 0 === stripos( $title, $heading_prefix ) ) {
 				$element['settings']['title'] = substr( $title, strlen( $heading_prefix ) );
-				++$stats['headings_reverted'];
+				++$stats['legacy_headings'];
 			}
 		}
 
 		if ( 'image' === $type ) {
-			$alt = (string) ( $element['settings']['image_alt'] ?? '' );
-			if ( $alt === $logo_alt ) {
+			if ( ( $element['settings']['image_alt'] ?? '' ) === $logo_alt ) {
 				$element['settings']['image_alt'] = '';
-				++$stats['image_alts_cleared'];
+				++$stats['legacy_alts'];
 			}
 			if ( isset( $element['settings']['image']['alt'] ) && $element['settings']['image']['alt'] === $logo_alt ) {
 				$element['settings']['image']['alt'] = '';
-			}
-			if ( ! empty( $element['settings']['image']['id'] ) ) {
-				$aid = (int) $element['settings']['image']['id'];
-				if ( get_post_meta( $aid, '_wp_attachment_image_alt', true ) === $logo_alt ) {
-					delete_post_meta( $aid, '_wp_attachment_image_alt' );
-					++$stats['attachment_alts_cleared'];
-				}
-			}
-		}
-
-		if ( 'text-editor' === $type && isset( $element['settings']['editor'] ) ) {
-			$editor = (string) $element['settings']['editor'];
-			$trim   = ltrim( $editor );
-			if ( 0 === stripos( $trim, '<p>Plumbers bolton' ) && false !== stripos( $editor, 'gascon-rm-seo-img' ) ) {
-				// Entire widget was our SEO block — drop widget by skipping (parent must handle).
-				++$stats['text_widgets_removed'];
-				continue;
 			}
 		}
 
@@ -103,14 +134,25 @@ function gascon_rm_strip_post_content( $content, $seo_html ) {
 	return $out;
 }
 
+function gascon_rm_elementor_clear_cache() {
+	if ( ! class_exists( '\Elementor\Plugin' ) ) {
+		return;
+	}
+	$elementor = \Elementor\Plugin::$instance;
+	if ( $elementor && isset( $elementor->files_manager ) && is_object( $elementor->files_manager ) ) {
+		$elementor->files_manager->clear_cache();
+	}
+}
+
 foreach ( $post_ids as $post_id ) {
 	echo "=== Post $post_id ===\n";
 	$stats = array(
-		'sections_removed'       => 0,
-		'headings_reverted'      => 0,
-		'image_alts_cleared'     => 0,
-		'attachment_alts_cleared' => 0,
-		'text_widgets_removed'   => 0,
+		'v2_text'          => 0,
+		'v2_image'         => 0,
+		'v2_attachment'    => 0,
+		'legacy_sections'  => 0,
+		'legacy_headings'  => 0,
+		'legacy_alts'      => 0,
 	);
 
 	$post = get_post( $post_id );
@@ -119,7 +161,7 @@ foreach ( $post_ids as $post_id ) {
 		continue;
 	}
 
-	$new_content = gascon_rm_strip_post_content( (string) $post->post_content, $seo_html );
+	$new_content = gascon_rm_strip_post_content( (string) $post->post_content, $legacy_seo_html );
 	if ( $new_content !== $post->post_content ) {
 		wp_update_post(
 			array(
@@ -127,13 +169,12 @@ foreach ( $post_ids as $post_id ) {
 				'post_content' => $new_content,
 			)
 		);
-		echo "  OK: removed SEO block from post_content\n";
-	} else {
-		echo "  post_content: no SEO block found\n";
+		echo "  OK: removed legacy SEO block from post_content\n";
 	}
 
 	$raw = get_post_meta( $post_id, '_elementor_data', true );
 	if ( empty( $raw ) ) {
+		delete_post_meta( $post_id, GASCON_RM_PATCH_META );
 		echo "  WARN: no Elementor data\n";
 		continue;
 	}
@@ -144,7 +185,16 @@ foreach ( $post_ids as $post_id ) {
 		continue;
 	}
 
-	// Remove top-level injected sections.
+	$patch_json = get_post_meta( $post_id, GASCON_RM_PATCH_META, true );
+	if ( ! empty( $patch_json ) ) {
+		$patch = json_decode( $patch_json, true );
+		if ( is_array( $patch ) && (int) ( $patch['version'] ?? 0 ) === 2 ) {
+			gascon_rm_revert_v2_patch( $data, $patch, $stats );
+			delete_post_meta( $post_id, GASCON_RM_PATCH_META );
+			echo "  OK: reverted v2 patch from meta\n";
+		}
+	}
+
 	$before = count( $data );
 	$data   = array_values(
 		array_filter(
@@ -157,24 +207,17 @@ foreach ( $post_ids as $post_id ) {
 			}
 		)
 	);
-	$stats['sections_removed'] += $before - count( $data );
+	$stats['legacy_sections'] += $before - count( $data );
 
-	$data = gascon_rm_revert_elementor( $data, $heading_prefix, $logo_alt, $stats );
+	$data = gascon_rm_revert_legacy_elementor( $data, $heading_prefix, $legacy_alt, $stats );
 
 	update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( $data ) ) );
 	delete_post_meta( $post_id, '_elementor_css' );
+	gascon_rm_elementor_clear_cache();
 
-	if ( class_exists( '\Elementor\Plugin' ) ) {
-		$elementor = \Elementor\Plugin::$instance;
-		if ( $elementor && isset( $elementor->files_manager ) && is_object( $elementor->files_manager ) ) {
-			$elementor->files_manager->clear_cache();
-		}
-	}
-
-	echo "  Sections removed: {$stats['sections_removed']}\n";
-	echo "  Headings reverted: {$stats['headings_reverted']}\n";
-	echo "  Image alts cleared: {$stats['image_alts_cleared']}\n";
+	echo "  v2 reverted: text={$stats['v2_text']} image={$stats['v2_image']}\n";
+	echo "  legacy: sections={$stats['legacy_sections']} headings={$stats['legacy_headings']}\n";
 	echo "  Done.\n";
 }
 
-echo "\nClear site cache, then Elementor → Tools → Regenerate CSS & Data.\n";
+echo "\nClear site cache → Elementor → Tools → Regenerate CSS & Data.\n";

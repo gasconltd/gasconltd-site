@@ -1,15 +1,19 @@
 <?php
 /**
- * Fix Rank Math content checks for Elementor pages (keyword, H2/H3, image alt).
+ * Rank Math / Elementor — minimal in-place SEO (v2).
  *
- * Rank Math analyzes post_content and early builder text — not Revolution Slider alone.
+ * - Does NOT add new sections or change post_content (avoids duplicate layout).
+ * - Prepends a short block to the first main text widget (skips hero section).
+ * - Sets alt on one existing content image (not the logo).
+ * - Saves _gascon_rm_patch_v2 for a clean revert.
+ *
  * Run on Azure:
  *   cd /home/site/wwwroot
- *   wp eval-file fix-rankmath-content.php --allow-root
- *   wp eval-file fix-rankmath-content.php 27246 --allow-root
- *
- * All three service pages:
+ *   curl -fsSL -o fix-rankmath-content.php "https://raw.githubusercontent.com/gasconltd/gasconltd-site/main/scripts/fix-rankmath-content.php"
  *   wp eval-file fix-rankmath-content.php all --allow-root
+ *
+ * Revert:
+ *   wp eval-file revert-rankmath-content.php all --allow-root
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -19,36 +23,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $args;
 
-$keyword      = 'plumbers bolton';
-$marker_class = 'gascon-rm-seo';
-$logo_url     = 'https://gasconltd.com/wp-content/uploads/2025/07/Gascon-Logo.png';
-$logo_id      = 0;
+const GASCON_RM_PATCH_META = '_gascon_rm_patch_v2';
+const GASCON_RM_KEYWORD    = 'plumbers bolton';
 
-$logo_posts = get_posts(
-	array(
-		'post_type'      => 'attachment',
-		'posts_per_page' => 1,
-		'meta_query'     => array(
-			array(
-				'key'     => '_wp_attached_file',
-				'value'   => 'Gascon-Logo.png',
-				'compare' => 'LIKE',
-			),
-		),
-		'fields'         => 'ids',
-	)
-);
-if ( ! empty( $logo_posts[0] ) ) {
-	$logo_id = (int) $logo_posts[0];
-}
+$prepend_html = '<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing, boiler repairs and central heating across Bolton.</p>'
+	. '<h2>Plumbers Bolton — plumbing and heating</h2>'
+	. '<h3>Trusted plumbers bolton for emergencies and installations</h3>';
 
-$seo_html = <<<HTML
-<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing, boiler repairs and central heating across Bolton and Greater Manchester.</p>
-<h2>Plumbers Bolton plumbing and heating services</h2>
-<h3>Trusted plumbers bolton for emergencies and installations</h3>
-<p>Our <strong>plumbers bolton</strong> team handles leaks, boiler breakdowns, radiators and new installations. Call <a href="tel:07828623767">07828 623 767</a> for a free quote.</p>
-<p><img src="{$logo_url}" alt="plumbers bolton GASCON Ltd Gas Safe heating engineers" width="400" height="106" loading="lazy" class="{$marker_class}-img" /></p>
-HTML;
+$image_alt = 'plumbers bolton — GASCON Ltd Gas Safe heating engineers';
 
 $default_ids = array( 25420, 27246, 27069 );
 $arg0        = isset( $args[0] ) ? (string) $args[0] : '';
@@ -59,169 +41,112 @@ if ( 'all' === $arg0 || '' === $arg0 ) {
 	$post_ids = array( (int) $arg0 );
 }
 
-function gascon_rm_random_id() {
-	return substr( bin2hex( random_bytes( 4 ) ), 0, 7 );
-}
-
-function gascon_rm_has_marker( array $elements, $marker_class ) {
-	foreach ( $elements as $element ) {
-		$classes = $element['settings']['css_classes'] ?? '';
-		if ( is_string( $classes ) && false !== strpos( $classes, $marker_class ) ) {
+function gascon_rm_find_by_id( array $elements, $widget_id, &$found = null ) {
+	foreach ( $elements as &$element ) {
+		if ( ( $element['id'] ?? '' ) === $widget_id ) {
+			$found = &$element;
 			return true;
 		}
-		if ( ! empty( $element['elements'] ) && gascon_rm_has_marker( $element['elements'], $marker_class ) ) {
+		if ( ! empty( $element['elements'] ) && gascon_rm_find_by_id( $element['elements'], $widget_id, $found ) ) {
 			return true;
 		}
 	}
 	return false;
 }
 
-function gascon_rm_build_seo_section( $seo_html, $marker_class, $logo_url, $logo_id ) {
-	$text_id     = gascon_rm_random_id();
-	$heading_id  = gascon_rm_random_id();
-	$image_id    = gascon_rm_random_id();
-	$column_id   = gascon_rm_random_id();
-	$section_id  = gascon_rm_random_id();
+function gascon_rm_is_logo_image( array $widget ) {
+	$url = $widget['settings']['image']['url'] ?? '';
+	if ( is_string( $url ) && false !== stripos( $url, 'logo' ) ) {
+		return true;
+	}
+	$alt = $widget['settings']['image_alt'] ?? '';
+	return is_string( $alt ) && false !== stripos( $alt, 'logo' );
+}
 
-	$image_settings = array(
-		'image'            => array(
-			'url'    => $logo_url,
-			'id'     => $logo_id,
-			'alt'    => 'plumbers bolton GASCON Ltd Gas Safe heating engineers',
-			'source' => $logo_id ? 'library' : 'url',
-		),
-		'image_size'       => 'medium',
-		'align'            => 'left',
-		'image_alt'        => 'plumbers bolton GASCON Ltd Gas Safe heating engineers',
-		'css_classes'      => $marker_class . '-img',
-	);
+/**
+ * Walk page Elementor tree; skip first top-level section (hero/slider).
+ *
+ * @return array{text: ?array, image: ?array}
+ */
+function gascon_rm_find_target_ids( array $elements, $skip_first_section = true ) {
+	$text_id  = null;
+	$image_id = null;
+	$skipped  = false;
+
+	$walk = function ( array $els, $inside_hero ) use ( &$walk, &$text_id, &$image_id, &$skipped, $skip_first_section ) {
+		foreach ( $els as $el ) {
+			if ( null !== $text_id && null !== $image_id ) {
+				return;
+			}
+
+			$is_top = ( 'section' === ( $el['elType'] ?? '' ) && empty( $el['isInner'] ) );
+
+			if ( $is_top && $skip_first_section && ! $skipped ) {
+				$skipped = true;
+				if ( ! empty( $el['elements'] ) ) {
+					$walk( $el['elements'], true );
+				}
+				continue;
+			}
+
+			$hero = $inside_hero;
+			if ( $is_top && $skipped ) {
+				$hero = false;
+			}
+
+			$type = $el['widgetType'] ?? '';
+			$id   = $el['id'] ?? '';
+
+			if ( ! $hero && 'text-editor' === $type && null === $text_id && $id && ! empty( $el['settings']['editor'] ) ) {
+				if ( false === stripos( (string) $el['settings']['editor'], GASCON_RM_KEYWORD ) ) {
+					$text_id = $id;
+				}
+			}
+
+			if ( ! $hero && 'image' === $type && null === $image_id && $id && ! gascon_rm_is_logo_image( $el ) ) {
+				$alt    = trim( (string) ( $el['settings']['image_alt'] ?? '' ) );
+				$nested = trim( (string) ( $el['settings']['image']['alt'] ?? '' ) );
+				if ( '' === $alt && '' === $nested ) {
+					$image_id = $id;
+				}
+			}
+
+			if ( ! empty( $el['elements'] ) ) {
+				$walk( $el['elements'], $hero );
+			}
+		}
+	};
+
+	$walk( $elements, false );
 
 	return array(
-		'id'       => $section_id,
-		'elType'   => 'section',
-		'isInner'  => false,
-		'settings' => array(
-			'css_classes' => $marker_class,
-			'padding'     => array(
-				'unit'       => 'px',
-				'top'        => '20',
-				'right'      => '0',
-				'bottom'     => '20',
-				'left'       => '0',
-				'isLinked'   => false,
-			),
-		),
-		'elements' => array(
-			array(
-				'id'       => $column_id,
-				'elType'   => 'column',
-				'settings' => array( '_column_size' => 100 ),
-				'elements' => array(
-					array(
-						'id'         => $text_id,
-						'elType'     => 'widget',
-						'widgetType' => 'text-editor',
-						'settings'   => array( 'editor' => $seo_html ),
-						'elements'   => array(),
-					),
-					array(
-						'id'         => $heading_id,
-						'elType'     => 'widget',
-						'widgetType' => 'heading',
-						'settings'   => array(
-							'title'       => 'Plumbers Bolton — Gas Safe plumbing & heating',
-							'header_size' => 'h2',
-						),
-						'elements'   => array(),
-					),
-					array(
-						'id'         => $image_id,
-						'elType'     => 'widget',
-						'widgetType' => 'image',
-						'settings'   => $image_settings,
-						'elements'   => array(),
-					),
-				),
-			),
-		),
+		'text_id'  => $text_id,
+		'image_id' => $image_id,
 	);
 }
 
-function gascon_rm_patch_elementor( array &$elements, $keyword, $logo_alt ) {
-	$stats = array(
-		'images'   => 0,
-		'headings' => 0,
-	);
-
-	foreach ( $elements as &$element ) {
-		if ( ! empty( $element['elements'] ) && is_array( $element['elements'] ) ) {
-			$child = gascon_rm_patch_elementor( $element['elements'], $keyword, $logo_alt );
-			$stats['images']   += $child['images'];
-			$stats['headings'] += $child['headings'];
-		}
-
-		$type = $element['widgetType'] ?? '';
-		if ( 'image' === $type ) {
-			$alt = $element['settings']['image_alt'] ?? '';
-			if ( '' === trim( (string) $alt ) ) {
-				$element['settings']['image_alt'] = $logo_alt;
-				++$stats['images'];
-			}
-			if ( isset( $element['settings']['image'] ) && is_array( $element['settings']['image'] ) ) {
-				if ( empty( $element['settings']['image']['alt'] ) ) {
-					$element['settings']['image']['alt'] = $logo_alt;
-				}
-				if ( ! empty( $element['settings']['image']['id'] ) ) {
-					update_post_meta(
-						(int) $element['settings']['image']['id'],
-						'_wp_attachment_image_alt',
-						$logo_alt
-					);
-				}
-			}
-		}
-
-		if ( 'heading' === $type ) {
-			$title = (string) ( $element['settings']['title'] ?? '' );
-			if ( false === stripos( $title, $keyword ) ) {
-				$size = $element['settings']['header_size'] ?? 'h2';
-				if ( in_array( $size, array( 'h2', 'h3', 'h4' ), true ) ) {
-					$element['settings']['title'] = 'Plumbers Bolton — ' . $title;
-					++$stats['headings'];
-				}
-			}
-		}
+function gascon_rm_elementor_clear_cache() {
+	if ( ! class_exists( '\Elementor\Plugin' ) ) {
+		return;
 	}
-
-	return $stats;
+	$elementor = \Elementor\Plugin::$instance;
+	if ( $elementor && isset( $elementor->files_manager ) && is_object( $elementor->files_manager ) ) {
+		$elementor->files_manager->clear_cache();
+	}
 }
 
 foreach ( $post_ids as $post_id ) {
-	echo "=== Post $post_id ===\n";
+	echo "=== Post $post_id (v2 minimal) ===\n";
 
-	$post = get_post( $post_id );
-	if ( ! $post ) {
-		echo "  SKIP: post not found\n";
+	$existing = get_post_meta( $post_id, GASCON_RM_PATCH_META, true );
+	if ( ! empty( $existing ) ) {
+		echo "  SKIP: v2 patch already applied (run revert-rankmath-content.php first to re-apply)\n";
 		continue;
-	}
-
-	// Rank Math reads post_content in the editor analysis.
-	$current = (string) $post->post_content;
-	if ( false === stripos( $current, $keyword ) ) {
-		wp_update_post(
-			array(
-				'ID'           => $post_id,
-				'post_content' => $seo_html . "\n" . $current,
-			)
-		);
-		echo "  OK: prepended SEO block to post_content\n";
-	} else {
-		echo "  post_content already contains focus keyword\n";
 	}
 
 	$raw = get_post_meta( $post_id, '_elementor_data', true );
 	if ( empty( $raw ) ) {
-		echo "  WARN: no Elementor data — post_content update only\n";
+		echo "  ERROR: no Elementor data\n";
 		continue;
 	}
 
@@ -231,27 +156,66 @@ foreach ( $post_ids as $post_id ) {
 		continue;
 	}
 
-	if ( ! gascon_rm_has_marker( $data, $marker_class ) ) {
-		array_unshift( $data, gascon_rm_build_seo_section( $seo_html, $marker_class, $logo_url, $logo_id ) );
-		echo "  OK: inserted Elementor SEO section at top of page\n";
+	$targets = gascon_rm_find_target_ids( $data );
+	$patch   = array( 'version' => 2 );
+
+	if ( ! empty( $targets['text_id'] ) ) {
+		$widget = null;
+		if ( gascon_rm_find_by_id( $data, $targets['text_id'], $widget ) && $widget ) {
+			$wid    = $targets['text_id'];
+			$before = (string) ( $widget['settings']['editor'] ?? '' );
+			$widget['settings']['editor'] = $prepend_html . $before;
+			$patch['text'] = array(
+				'id'        => $wid,
+				'prepended' => $prepend_html,
+			);
+			echo "  OK: prepended SEO copy to text-editor widget {$wid}\n";
+		}
 	} else {
-		echo "  Elementor SEO section already present\n";
+		echo "  WARN: no suitable text-editor found (keyword may already be present)\n";
 	}
 
-	$stats = gascon_rm_patch_elementor( $data, $keyword, 'plumbers bolton GASCON Ltd Gas Safe heating engineers' );
-	echo "  Patched image alts: {$stats['images']}, headings: {$stats['headings']}\n";
+	if ( ! empty( $targets['image_id'] ) ) {
+		$widget = null;
+		if ( gascon_rm_find_by_id( $data, $targets['image_id'], $widget ) && $widget ) {
+			$wid           = $targets['image_id'];
+			$before        = (string) ( $widget['settings']['image_alt'] ?? '' );
+			$nested_before = (string) ( $widget['settings']['image']['alt'] ?? '' );
+			$widget['settings']['image_alt'] = $image_alt;
+			if ( isset( $widget['settings']['image'] ) && is_array( $widget['settings']['image'] ) ) {
+				$widget['settings']['image']['alt'] = $image_alt;
+			}
+			$patch['image'] = array(
+				'id'         => $wid,
+				'image_alt'  => $before,
+				'nested_alt' => $nested_before,
+			);
+			$aid = (int) ( $widget['settings']['image']['id'] ?? 0 );
+			if ( $aid > 0 ) {
+				$patch['attachment'] = array(
+					'id'  => $aid,
+					'alt' => (string) get_post_meta( $aid, '_wp_attachment_image_alt', true ),
+				);
+				update_post_meta( $aid, '_wp_attachment_image_alt', $image_alt );
+			}
+			echo "  OK: set image alt on widget {$wid}\n";
+		}
+	} else {
+		echo "  WARN: no empty non-logo image widget found\n";
+	}
+
+	if ( empty( $patch['text'] ) && empty( $patch['image'] ) ) {
+		echo "  Nothing to patch — aborting without saving meta.\n";
+		continue;
+	}
 
 	update_post_meta( $post_id, '_elementor_data', wp_slash( wp_json_encode( $data ) ) );
-
-	if ( class_exists( '\Elementor\Plugin' ) ) {
-		$elementor = \Elementor\Plugin::$instance;
-		if ( $elementor && isset( $elementor->files_manager ) && is_object( $elementor->files_manager ) ) {
-			$elementor->files_manager->clear_cache();
-		}
-	}
-
+	update_post_meta( $post_id, GASCON_RM_PATCH_META, wp_slash( wp_json_encode( $patch ) ) );
 	delete_post_meta( $post_id, '_elementor_css' );
-	echo "  Done.\n";
+	gascon_rm_elementor_clear_cache();
+	echo "  Saved patch meta for revert.\n";
 }
 
-echo "\nNext: clear site cache → open page in Elementor → Update → click Rank Math refresh (↻) in SEO panel.\n";
+echo "\nTest the page in the browser. If layout breaks, run:\n";
+echo "  wp eval-file revert-rankmath-content.php all --allow-root\n";
+echo "Then Elementor → Update and clear cache.\n";

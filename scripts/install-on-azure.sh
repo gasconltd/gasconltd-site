@@ -6,6 +6,7 @@ set -euo pipefail
 
 cd /home/site/wwwroot
 
+# Pin to a commit SHA if GitHub CDN serves stale main (see repo commits).
 URL="https://raw.githubusercontent.com/gasconltd/gasconltd-site/main/scripts/fix-rankmath-content.php"
 
 echo "Downloading script..."
