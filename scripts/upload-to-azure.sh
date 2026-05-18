@@ -5,7 +5,7 @@
 #   (or Deployment credentials / publish profile).
 #
 # Usage:
-#   export AZURE_APP_NAME="your-app-name"          # without .azurewebsites.net
+#   export AZURE_APP_NAME="gasconltd"              # gasconltd.com → App Service name
 #   export AZURE_PUBLISH_USER="..."                # often \$app-name or custom
 #   export AZURE_PUBLISH_PASSWORD="..."
 #   bash scripts/upload-to-azure.sh
@@ -17,7 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE="${SCRIPT_DIR}/fix-rankmath-content.php"
-APP="${AZURE_APP_NAME:?Set AZURE_APP_NAME (e.g. gasconltd-wp)}"
+APP="${AZURE_APP_NAME:-gasconltd}"
 USER="${AZURE_PUBLISH_USER:?Set AZURE_PUBLISH_USER}"
 PASS="${AZURE_PUBLISH_PASSWORD:?Set AZURE_PUBLISH_PASSWORD}"
 
