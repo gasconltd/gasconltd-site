@@ -74,6 +74,17 @@ function gascon_rm_revert_v2_patch( array &$elements, array $patch, &$stats ) {
 		}
 		++$stats['v2_attachment'];
 	}
+
+	foreach ( array( 'heading_h2', 'heading_h3' ) as $hkey ) {
+		if ( empty( $patch[ $hkey ]['id'] ) ) {
+			continue;
+		}
+		$widget = null;
+		if ( gascon_rm_find_by_id( $elements, $patch[ $hkey ]['id'], $widget ) && $widget ) {
+			$widget['settings']['title'] = $patch[ $hkey ]['title'] ?? '';
+			++$stats['v2_headings'];
+		}
+	}
 }
 
 function gascon_rm_find_by_id( array $elements, $widget_id, &$found = null ) {
@@ -147,12 +158,13 @@ function gascon_rm_elementor_clear_cache() {
 foreach ( $post_ids as $post_id ) {
 	echo "=== Post $post_id ===\n";
 	$stats = array(
-		'v2_text'          => 0,
-		'v2_image'         => 0,
-		'v2_attachment'    => 0,
-		'legacy_sections'  => 0,
-		'legacy_headings'  => 0,
-		'legacy_alts'      => 0,
+		'v2_text'           => 0,
+		'v2_image'          => 0,
+		'v2_attachment'     => 0,
+		'v2_headings'       => 0,
+		'legacy_sections'   => 0,
+		'legacy_headings'   => 0,
+		'legacy_alts'       => 0,
 	);
 
 	$post = get_post( $post_id );
@@ -215,7 +227,7 @@ foreach ( $post_ids as $post_id ) {
 	delete_post_meta( $post_id, '_elementor_css' );
 	gascon_rm_elementor_clear_cache();
 
-	echo "  v2 reverted: text={$stats['v2_text']} image={$stats['v2_image']}\n";
+	echo "  v2 reverted: text={$stats['v2_text']} image={$stats['v2_image']} headings={$stats['v2_headings']}\n";
 	echo "  legacy: sections={$stats['legacy_sections']} headings={$stats['legacy_headings']}\n";
 	echo "  Done.\n";
 }

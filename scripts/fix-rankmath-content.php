@@ -14,6 +14,11 @@
  *
  * Revert:
  *   wp eval-file revert-rankmath-content.php all --allow-root
+ *
+ * Re-apply after a previous run:
+ *   wp eval-file fix-rankmath-content.php all force --allow-root
+ *
+ * Rank Math score in Elementor (no layout change): install-rankmath-helper.php
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -25,18 +30,22 @@ global $args;
 
 const GASCON_RM_PATCH_META = '_gascon_rm_patch_v2';
 const GASCON_RM_KEYWORD    = 'plumbers bolton';
+const GASCON_RM_IMAGE_ALT  = 'plumbers bolton GASCON Ltd Gas Safe heating engineers Bolton';
 
 $prepend_html = '<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing, boiler repairs and central heating across Bolton.</p>'
 	. '<h2>Plumbers Bolton — plumbing and heating</h2>'
 	. '<h3>Trusted plumbers bolton for emergencies and installations</h3>';
 
-$image_alt = 'plumbers bolton — GASCON Ltd Gas Safe heating engineers';
-
 $default_ids = array( 25420, 27246, 27069 );
 $arg0        = isset( $args[0] ) ? (string) $args[0] : '';
+$force       = false;
 
-if ( 'all' === $arg0 || '' === $arg0 ) {
-	$post_ids = 'all' === $arg0 ? $default_ids : array( (int) ( getenv( 'PAGE_ID' ) ?: $default_ids[0] ) );
+if ( 'force' === $arg0 || ( isset( $args[1] ) && 'force' === (string) $args[1] ) ) {
+	$force = true;
+}
+
+if ( 'all' === $arg0 || '' === $arg0 || 'force' === $arg0 ) {
+	$post_ids = ( 'all' === $arg0 || 'force' === $arg0 || '' === $arg0 ) ? $default_ids : array( (int) ( getenv( 'PAGE_ID' ) ?: $default_ids[0] ) );
 } else {
 	$post_ids = array( (int) $arg0 );
 }
@@ -68,60 +77,56 @@ function gascon_rm_is_logo_image( array $widget ) {
  *
  * @return array{text: ?array, image: ?array}
  */
-function gascon_rm_find_target_ids( array $elements, $skip_first_section = true ) {
-	$text_id  = null;
-	$image_id = null;
-	$skipped  = false;
+function gascon_rm_find_target_ids( array $elements ) {
+	$text_id    = null;
+	$image_id   = null;
+	$heading_h2 = null;
+	$heading_h3 = null;
 
-	$walk = function ( array $els, $inside_hero ) use ( &$walk, &$text_id, &$image_id, &$skipped, $skip_first_section ) {
+	$walk = function ( array $els ) use ( &$walk, &$text_id, &$image_id, &$heading_h2, &$heading_h3 ) {
 		foreach ( $els as $el ) {
-			if ( null !== $text_id && null !== $image_id ) {
-				return;
-			}
-
-			$is_top = ( 'section' === ( $el['elType'] ?? '' ) && empty( $el['isInner'] ) );
-
-			if ( $is_top && $skip_first_section && ! $skipped ) {
-				$skipped = true;
-				if ( ! empty( $el['elements'] ) ) {
-					$walk( $el['elements'], true );
-				}
-				continue;
-			}
-
-			$hero = $inside_hero;
-			if ( $is_top && $skipped ) {
-				$hero = false;
-			}
-
 			$type = $el['widgetType'] ?? '';
 			$id   = $el['id'] ?? '';
 
-			if ( ! $hero && 'text-editor' === $type && null === $text_id && $id && ! empty( $el['settings']['editor'] ) ) {
+			if ( 'text-editor' === $type && null === $text_id && $id && ! empty( $el['settings']['editor'] ) ) {
 				if ( false === stripos( (string) $el['settings']['editor'], GASCON_RM_KEYWORD ) ) {
 					$text_id = $id;
 				}
 			}
 
-			if ( ! $hero && 'image' === $type && null === $image_id && $id && ! gascon_rm_is_logo_image( $el ) ) {
+			if ( 'heading' === $type && $id ) {
+				$size  = $el['settings']['header_size'] ?? 'h2';
+				$title = (string) ( $el['settings']['title'] ?? '' );
+				if ( 'h2' === $size && null === $heading_h2 && false === stripos( $title, GASCON_RM_KEYWORD ) ) {
+					$heading_h2 = $id;
+				}
+				if ( 'h3' === $size && null === $heading_h3 && false === stripos( $title, GASCON_RM_KEYWORD ) ) {
+					$heading_h3 = $id;
+				}
+			}
+
+			if ( 'image' === $type && null === $image_id && $id && ! gascon_rm_is_logo_image( $el ) ) {
 				$alt    = trim( (string) ( $el['settings']['image_alt'] ?? '' ) );
 				$nested = trim( (string) ( $el['settings']['image']['alt'] ?? '' ) );
-				if ( '' === $alt && '' === $nested ) {
+				$combined = $alt . ' ' . $nested;
+				if ( false === stripos( $combined, GASCON_RM_KEYWORD ) ) {
 					$image_id = $id;
 				}
 			}
 
 			if ( ! empty( $el['elements'] ) ) {
-				$walk( $el['elements'], $hero );
+				$walk( $el['elements'] );
 			}
 		}
 	};
 
-	$walk( $elements, false );
+	$walk( $elements );
 
 	return array(
-		'text_id'  => $text_id,
-		'image_id' => $image_id,
+		'text_id'    => $text_id,
+		'image_id'   => $image_id,
+		'heading_h2' => $heading_h2,
+		'heading_h3' => $heading_h3,
 	);
 }
 
@@ -139,9 +144,12 @@ foreach ( $post_ids as $post_id ) {
 	echo "=== Post $post_id (v2 minimal) ===\n";
 
 	$existing = get_post_meta( $post_id, GASCON_RM_PATCH_META, true );
-	if ( ! empty( $existing ) ) {
-		echo "  SKIP: v2 patch already applied (run revert-rankmath-content.php first to re-apply)\n";
+	if ( ! empty( $existing ) && ! $force ) {
+		echo "  SKIP: patch already applied (use: wp eval-file fix-rankmath-content.php {$post_id} force --allow-root)\n";
 		continue;
+	}
+	if ( ! empty( $existing ) && $force ) {
+		echo "  Re-applying (force) — merge with existing patch meta\n";
 	}
 
 	$raw = get_post_meta( $post_id, '_elementor_data', true );
@@ -181,9 +189,9 @@ foreach ( $post_ids as $post_id ) {
 			$wid           = $targets['image_id'];
 			$before        = (string) ( $widget['settings']['image_alt'] ?? '' );
 			$nested_before = (string) ( $widget['settings']['image']['alt'] ?? '' );
-			$widget['settings']['image_alt'] = $image_alt;
+			$widget['settings']['image_alt'] = GASCON_RM_IMAGE_ALT;
 			if ( isset( $widget['settings']['image'] ) && is_array( $widget['settings']['image'] ) ) {
-				$widget['settings']['image']['alt'] = $image_alt;
+				$widget['settings']['image']['alt'] = GASCON_RM_IMAGE_ALT;
 			}
 			$patch['image'] = array(
 				'id'         => $wid,
@@ -196,15 +204,32 @@ foreach ( $post_ids as $post_id ) {
 					'id'  => $aid,
 					'alt' => (string) get_post_meta( $aid, '_wp_attachment_image_alt', true ),
 				);
-				update_post_meta( $aid, '_wp_attachment_image_alt', $image_alt );
+				update_post_meta( $aid, '_wp_attachment_image_alt', GASCON_RM_IMAGE_ALT );
 			}
 			echo "  OK: set image alt on widget {$wid}\n";
 		}
 	} else {
-		echo "  WARN: no empty non-logo image widget found\n";
+		echo "  WARN: no image widget without focus keyword in alt\n";
 	}
 
-	if ( empty( $patch['text'] ) && empty( $patch['image'] ) ) {
+	foreach ( array( 'heading_h2' => 'h2', 'heading_h3' => 'h3' ) as $key => $label ) {
+		if ( empty( $targets[ $key ] ) ) {
+			continue;
+		}
+		$widget = null;
+		if ( gascon_rm_find_by_id( $data, $targets[ $key ], $widget ) && $widget ) {
+			$wid    = $targets[ $key ];
+			$before = (string) ( $widget['settings']['title'] ?? '' );
+			$widget['settings']['title'] = 'Plumbers Bolton — ' . $before;
+			$patch[ $key ] = array(
+				'id'    => $wid,
+				'title' => $before,
+			);
+			echo "  OK: updated {$label} heading widget {$wid}\n";
+		}
+	}
+
+	if ( empty( $patch['text'] ) && empty( $patch['image'] ) && empty( $patch['heading_h2'] ) && empty( $patch['heading_h3'] ) ) {
 		echo "  Nothing to patch — aborting without saving meta.\n";
 		continue;
 	}
@@ -216,6 +241,7 @@ foreach ( $post_ids as $post_id ) {
 	echo "  Saved patch meta for revert.\n";
 }
 
-echo "\nTest the page in the browser. If layout breaks, run:\n";
-echo "  wp eval-file revert-rankmath-content.php all --allow-root\n";
-echo "Then Elementor → Update and clear cache.\n";
+echo "\nFor Rank Math checks in Elementor (recommended), also run:\n";
+echo "  wp eval-file install-rankmath-helper.php --allow-root\n";
+echo "Then open Elementor → SEO tab → refresh (↻) the score.\n";
+echo "\nIf layout breaks: wp eval-file revert-rankmath-content.php all --allow-root\n";
