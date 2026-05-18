@@ -30,11 +30,9 @@ global $args;
 
 const GASCON_RM_PATCH_META = '_gascon_rm_patch_v2';
 const GASCON_RM_KEYWORD    = 'plumbers bolton';
-const GASCON_RM_IMAGE_ALT  = 'plumbers bolton GASCON Ltd Gas Safe heating engineers Bolton';
+const GASCON_RM_IMAGE_ALT  = 'plumbers bolton';
 
-$prepend_html = '<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing, boiler repairs and central heating across Bolton.</p>'
-	. '<h2>Plumbers Bolton — plumbing and heating</h2>'
-	. '<h3>Trusted plumbers bolton for emergencies and installations</h3>';
+$prepend_html = '<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing and heating across Bolton.</p>';
 
 $default_ids = array( 25420, 27246, 27069 );
 $arg0        = isset( $args[0] ) ? (string) $args[0] : '';

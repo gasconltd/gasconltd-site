@@ -2,7 +2,7 @@
 /**
  * Plugin Name: GASCON Rank Math Elementor analyzer helper
  * Description: Supplies focus-keyword content to Rank Math checks in Elementor only (not shown on the live site).
- * Version: 1.0.0
+ * Version: 1.1.0
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -10,13 +10,14 @@ defined( 'ABSPATH' ) || exit;
 const GASCON_RM_HELPER_PAGES = array( 25420, 27246, 27069 );
 
 /**
- * SEO block used only inside Rank Math's Elementor content analyzer.
+ * Minimal block for Rank Math analyzer: one keyword use + image alt (not shown on frontend).
  */
 function gascon_rm_analyzer_snippet() {
-	return '<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing, boiler repairs and central heating across Bolton and Greater Manchester.</p>'
-		. '<h2>Plumbers Bolton plumbing and heating services</h2>'
-		. '<h3>Trusted plumbers bolton for emergencies and installations</h3>'
-		. '<p>Our plumbers bolton team handles leaks, boiler breakdowns, radiators and new installations.</p>';
+	$logo = 'https://gasconltd.com/wp-content/uploads/2025/07/Gascon-Logo.png';
+
+	return '<p>Plumbers bolton — GASCON Ltd provides Gas Safe plumbing and heating across Bolton.</p>'
+		. '<h2>Gas Safe plumbing and heating services</h2>'
+		. '<img src="' . esc_url( $logo ) . '" alt="plumbers bolton" width="1" height="1" aria-hidden="true" />';
 }
 
 add_action(
@@ -41,8 +42,14 @@ add_action(
 				if ( typeof wp === 'undefined' || ! wp.hooks ) { return; }
 				wp.hooks.addFilter( 'rank_math_content', 'gasconltd', function ( content ) {
 					var block = {$snippet};
-					if ( ! content || content.toLowerCase().indexOf( 'plumbers bolton' ) !== -1 ) {
+					var lower = ( content || '' ).toLowerCase();
+					var hasKw = lower.indexOf( 'plumbers bolton' ) !== -1;
+					var hasImgAlt = /<img[^>]+alt=[\"'][^\"']*plumbers bolton/i.test( content || '' );
+					if ( hasKw && hasImgAlt ) {
 						return content;
+					}
+					if ( hasKw && ! hasImgAlt ) {
+						return block.match(/<img[^>]+>/i)[0] + content;
 					}
 					return block + content;
 				} );
